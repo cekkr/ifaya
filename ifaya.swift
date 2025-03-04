@@ -311,6 +311,307 @@ public class GRUCell: Module {
     }
 }
 
+public class LSTMCell: Module {
+    private let inputSize: Int
+    private let hiddenSize: Int
+    
+    // Input gate
+    private let wii: Linear
+    private let whi: Linear
+    
+    // Forget gate
+    private let wif: Linear
+    private let whf: Linear
+    
+    // Cell gate
+    private let wig: Linear
+    private let whg: Linear
+    
+    // Output gate
+    private let wio: Linear
+    private let who: Linear
+    
+    public init(inputSize: Int, hiddenSize: Int) {
+        self.inputSize = inputSize
+        self.hiddenSize = hiddenSize
+        
+        // Inizializza i gate lineari
+        self.wii = Linear(inFeatures: inputSize, outFeatures: hiddenSize)
+        self.whi = Linear(inFeatures: hiddenSize, outFeatures: hiddenSize)
+        
+        self.wif = Linear(inFeatures: inputSize, outFeatures: hiddenSize)
+        self.whf = Linear(inFeatures: hiddenSize, outFeatures: hiddenSize)
+        
+        self.wig = Linear(inFeatures: inputSize, outFeatures: hiddenSize)
+        self.whg = Linear(inFeatures: hiddenSize, outFeatures: hiddenSize)
+        
+        self.wio = Linear(inFeatures: inputSize, outFeatures: hiddenSize)
+        self.who = Linear(inFeatures: hiddenSize, outFeatures: hiddenSize)
+    }
+    
+    public func forward(_ input: Tensor, state: (Tensor, Tensor)? = nil) -> (Tensor, Tensor) {
+        let batchSize = input.shape[0]
+        let h = state?.0 ?? Tensor.zeros(shape: [batchSize, hiddenSize])
+        let c = state?.1 ?? Tensor.zeros(shape: [batchSize, hiddenSize])
+        
+        // Input gate
+        let i = self.wii.forward(input).add(self.whi.forward(h)).sigmoid()
+        
+        // Forget gate
+        let f = self.wif.forward(input).add(self.whf.forward(h)).sigmoid()
+        
+        // Cell gate
+        let g = self.wig.forward(input).add(self.whg.forward(h)).tanh()
+        
+        // Output gate
+        let o = self.wio.forward(input).add(self.who.forward(h)).sigmoid()
+        
+        // New cell state
+        let cNew = f.mul(c).add(i.mul(g))
+        
+        // New hidden state
+        let hNew = o.mul(cNew.tanh())
+        
+        return (hNew, cNew)
+    }
+    
+    public func parameters() -> [Tensor] {
+        return wii.parameters() + whi.parameters() +
+               wif.parameters() + whf.parameters() +
+               wig.parameters() + whg.parameters() +
+               wio.parameters() + who.parameters()
+    }
+}
+
+public class Conv2D: Module {
+    var weight: Tensor
+    var bias: Tensor
+    let inChannels: Int
+    let outChannels: Int
+    let kernelSize: (Int, Int)
+    let stride: (Int, Int)
+    let padding: (Int, Int)
+    
+    public init(inChannels: Int, outChannels: Int, kernelSize: (Int, Int), stride: (Int, Int) = (1, 1), padding: (Int, Int) = (0, 0), bias: Bool = true) {
+        self.inChannels = inChannels
+        self.outChannels = outChannels
+        self.kernelSize = kernelSize
+        self.stride = stride
+        self.padding = padding
+        
+        // Kaiming/He initialization per i pesi
+        let fanIn = inChannels * kernelSize.0 * kernelSize.1
+        let stdv = sqrt(2.0 / Float(fanIn))
+        
+        // Inizializza i pesi con forma [outChannels, inChannels, kernelHeight, kernelWidth]
+        self.weight = Tensor.randn(shape: [outChannels, inChannels, kernelSize.0, kernelSize.1], requiresGrad: true)
+        
+        // Scala i pesi
+        for i in 0..<self.weight.data.count {
+            self.weight.data[i] *= stdv
+        }
+        
+        if bias {
+            self.bias = Tensor(shape: [outChannels], requiresGrad: true)
+        } else {
+            self.bias = Tensor(shape: [outChannels], requiresGrad: false)
+        }
+    }
+    
+    public func forward(_ input: Tensor) -> Tensor {
+        // Verifica input shape: [batchSize, inChannels, height, width]
+        precondition(input.shape.count == 4, "Input deve avere 4 dimensioni [batch, channels, height, width]")
+        precondition(input.shape[1] == inChannels, "Il numero di canali di input deve corrispondere")
+        
+        let batchSize = input.shape[0]
+        let inputHeight = input.shape[2]
+        let inputWidth = input.shape[3]
+        
+        // Calcola dimensioni output
+        let outputHeight = (inputHeight + 2 * padding.0 - kernelSize.0) / stride.0 + 1
+        let outputWidth = (inputWidth + 2 * padding.1 - kernelSize.1) / stride.1 + 1
+        
+        // Crea tensore per l'output
+        let outputShape = [batchSize, outChannels, outputHeight, outputWidth]
+        var outputData = [Float](repeating: 0, count: outputShape.reduce(1, *))
+        
+        // Implementazione convoluzione 2D
+        // Nota: In una implementazione reale, useremmo Metal o Accelerate
+        // per operazioni efficienti di convoluzione
+        
+        // Loop attraverso ogni posizione di output
+        for b in 0..<batchSize {
+            for oc in 0..<outChannels {
+                for oh in 0..<outputHeight {
+                    for ow in 0..<outputWidth {
+                        var sum: Float = 0.0
+                        
+                        // Loop attraverso il kernel
+                        for ic in 0..<inChannels {
+                            for kh in 0..<kernelSize.0 {
+                                for kw in 0..<kernelSize.1 {
+                                    let ih = oh * stride.0 + kh - padding.0
+                                    let iw = ow * stride.1 + kw - padding.1
+                                    
+                                    // Check se la posizione è dentro l'input
+                                    if ih >= 0 && ih < inputHeight && iw >= 0 && iw < inputWidth {
+                                        let inputIdx = b * (inChannels * inputHeight * inputWidth) +
+                                                      ic * (inputHeight * inputWidth) +
+                                                      ih * inputWidth + iw
+                                        
+                                        let weightIdx = oc * (inChannels * kernelSize.0 * kernelSize.1) +
+                                                       ic * (kernelSize.0 * kernelSize.1) +
+                                                       kh * kernelSize.1 + kw
+                                        
+                                        sum += input.data[inputIdx] * weight.data[weightIdx]
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Aggiungi bias
+                        sum += bias.data[oc]
+                        
+                        // Salva il risultato
+                        let outputIdx = b * (outChannels * outputHeight * outputWidth) +
+                                       oc * (outputHeight * outputWidth) +
+                                       oh * outputWidth + ow
+                        
+                        outputData[outputIdx] = sum
+                    }
+                }
+            }
+        }
+        
+        return Tensor(data: outputData, shape: outputShape, requiresGrad: true)
+    }
+    
+    public func parameters() -> [Tensor] {
+        return [weight, bias]
+    }
+}
+
+public class ConvTranspose2D: Module {
+    var weight: Tensor
+    var bias: Tensor
+    let inChannels: Int
+    let outChannels: Int
+    let kernelSize: (Int, Int)
+    let stride: (Int, Int)
+    let padding: (Int, Int)
+    let outputPadding: (Int, Int)
+    
+    public init(inChannels: Int, outChannels: Int, kernelSize: (Int, Int), stride: (Int, Int) = (1, 1), 
+                padding: (Int, Int) = (0, 0), outputPadding: (Int, Int) = (0, 0), bias: Bool = true) {
+        self.inChannels = inChannels
+        self.outChannels = outChannels
+        self.kernelSize = kernelSize
+        self.stride = stride
+        self.padding = padding
+        self.outputPadding = outputPadding
+        
+        // Kaiming/He initialization per i pesi
+        let fanIn = inChannels * kernelSize.0 * kernelSize.1
+        let stdv = sqrt(2.0 / Float(fanIn))
+        
+        // Nota: per ConvTranspose2D lo shape è [inChannels, outChannels, kernelHeight, kernelWidth]
+        // che è l'inverso di Conv2D
+        self.weight = Tensor.randn(shape: [inChannels, outChannels, kernelSize.0, kernelSize.1], requiresGrad: true)
+        
+        // Scala i pesi
+        for i in 0..<self.weight.data.count {
+            self.weight.data[i] *= stdv
+        }
+        
+        if bias {
+            self.bias = Tensor(shape: [outChannels], requiresGrad: true)
+        } else {
+            self.bias = Tensor(shape: [outChannels], requiresGrad: false)
+        }
+    }
+    
+    public func forward(_ input: Tensor) -> Tensor {
+        // Verifica input shape: [batchSize, inChannels, height, width]
+        precondition(input.shape.count == 4, "Input deve avere 4 dimensioni [batch, channels, height, width]")
+        precondition(input.shape[1] == inChannels, "Il numero di canali di input deve corrispondere")
+        
+        let batchSize = input.shape[0]
+        let inputHeight = input.shape[2]
+        let inputWidth = input.shape[3]
+        
+        // Calcola dimensioni output per la convoluzione trasposta
+        let outputHeight = (inputHeight - 1) * stride.0 - 2 * padding.0 + kernelSize.0 + outputPadding.0
+        let outputWidth = (inputWidth - 1) * stride.1 - 2 * padding.1 + kernelSize.1 + outputPadding.1
+        
+        // Crea tensore per l'output
+        let outputShape = [batchSize, outChannels, outputHeight, outputWidth]
+        var outputData = [Float](repeating: 0, count: outputShape.reduce(1, *))
+        
+        // Implementazione convoluzione trasposta 2D
+        // Nota: In una implementazione reale, useremmo Metal o Accelerate
+        
+        // Inizializza l'output con i bias
+        for b in 0..<batchSize {
+            for oc in 0..<outChannels {
+                for oh in 0..<outputHeight {
+                    for ow in 0..<outputWidth {
+                        let outputIdx = b * (outChannels * outputHeight * outputWidth) +
+                                        oc * (outputHeight * outputWidth) +
+                                        oh * outputWidth + ow
+                        
+                        outputData[outputIdx] = bias.data[oc]
+                    }
+                }
+            }
+        }
+        
+        // Loop attraverso ogni posizione di input
+        for b in 0..<batchSize {
+            for ic in 0..<inChannels {
+                for ih in 0..<inputHeight {
+                    for iw in 0..<inputWidth {
+                        let inputIdx = b * (inChannels * inputHeight * inputWidth) +
+                                       ic * (inputHeight * inputWidth) +
+                                       ih * inputWidth + iw
+                        
+                        let inputValue = input.data[inputIdx]
+                        
+                        // Loop attraverso il kernel
+                        for oc in 0..<outChannels {
+                            for kh in 0..<kernelSize.0 {
+                                for kw in 0..<kernelSize.1 {
+                                    // Calcola posizione nell'output
+                                    let oh = ih * stride.0 + kh - padding.0
+                                    let ow = iw * stride.1 + kw - padding.1
+                                    
+                                    // Check se la posizione è dentro l'output
+                                    if oh >= 0 && oh < outputHeight && ow >= 0 && ow < outputWidth {
+                                        let outputIdx = b * (outChannels * outputHeight * outputWidth) +
+                                                        oc * (outputHeight * outputWidth) +
+                                                        oh * outputWidth + ow
+                                        
+                                        let weightIdx = ic * (outChannels * kernelSize.0 * kernelSize.1) +
+                                                        oc * (kernelSize.0 * kernelSize.1) +
+                                                        kh * kernelSize.1 + kw
+                                        
+                                        outputData[outputIdx] += inputValue * weight.data[weightIdx]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return Tensor(data: outputData, shape: outputShape, requiresGrad: true)
+    }
+    
+    public func parameters() -> [Tensor] {
+        return [weight, bias]
+    }
+}
+
 public class Sequential: Module {
     private var modules: [Module]
     
