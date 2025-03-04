@@ -87,6 +87,91 @@ func demoGRUModel() {
     }
 }
 
+// MARK: - 3.1 Creazione di rete ricorrente LSTM
+func demoLSTMModel() {
+    print("\n=== DEMO LSTM ===")
+    
+    // Dimensioni
+    let batchSize = 3
+    let sequenceLength = 5
+    let inputSize = 4
+    let hiddenSize = 8
+    
+    // Creazione cella LSTM
+    let lstm = LSTMCell(inputSize: inputSize, hiddenSize: hiddenSize)
+    
+    // Input simulato (batch, features)
+    let input = Tensor.randn(shape: [batchSize, inputSize])
+    
+    // Stato iniziale (hidden, cell)
+    var hidden = Tensor.zeros(shape: [batchSize, hiddenSize])
+    var cell = Tensor.zeros(shape: [batchSize, hiddenSize])
+    
+    // Simuliamo una sequenza
+    print("Simulazione sequenza di lunghezza \(sequenceLength):")
+    for i in 0..<sequenceLength {
+        (hidden, cell) = lstm.forward(input, state: (hidden, cell))
+        print("Step \(i+1) - Primi valori hidden: \(Array(hidden.data.prefix(3)))")
+        print("Step \(i+1) - Primi valori cell: \(Array(cell.data.prefix(3)))")
+    }
+}
+
+// MARK: - 3.2 Demo Conv2D e ConvTranspose2D
+func demoConvNets() {
+    print("\n=== DEMO RETI CONVOLUZIONALI ===")
+    
+    // Dimensioni per le demo
+    let batchSize = 2
+    let inputChannels = 3  // RGB
+    let outputChannels = 16
+    let imageHeight = 32
+    let imageWidth = 32
+    
+    // Crea un tensore di input simulato [batch, channels, height, width]
+    let input = Tensor.randn(shape: [batchSize, inputChannels, imageHeight, imageWidth])
+    print("Input shape: \(input.shape)")
+    
+    // 1. Convoluzione 2D semplice
+    let conv = Conv2D(inChannels: inputChannels, outChannels: outputChannels, 
+                     kernelSize: (3, 3), padding: (1, 1))
+    
+    let convOutput = conv.forward(input)
+    print("Conv2D output shape: \(convOutput.shape)")
+    
+    // 2. Convoluzione transposta
+    let convT = ConvTranspose2D(inChannels: outputChannels, outChannels: inputChannels,
+                              kernelSize: (3, 3), stride: (2, 2), padding: (1, 1))
+    
+    let upscaledOutput = convT.forward(convOutput)
+    print("ConvTranspose2D output shape: \(upscaledOutput.shape)")
+    
+    // 3. Modello CNN semplice
+    let cnn = Sequential(
+        Conv2D(inChannels: inputChannels, outChannels: 16, kernelSize: (3, 3), padding: (1, 1)),
+        ReLU(),
+        Conv2D(inChannels: 16, outChannels: 32, kernelSize: (3, 3), stride: (2, 2), padding: (1, 1)),
+        ReLU(),
+        Conv2D(inChannels: 32, outChannels: 64, kernelSize: (3, 3), stride: (2, 2), padding: (1, 1)),
+        ReLU()
+    )
+    
+    let cnnOutput = cnn.forward(input)
+    print("CNN output shape: \(cnnOutput.shape)")
+    
+    // 4. Modello decoder/upsampling
+    let decoder = Sequential(
+        ConvTranspose2D(inChannels: 64, outChannels: 32, kernelSize: (3, 3), stride: (2, 2), padding: (1, 1)),
+        ReLU(),
+        ConvTranspose2D(inChannels: 32, outChannels: 16, kernelSize: (3, 3), stride: (2, 2), padding: (1, 1)),
+        ReLU(),
+        ConvTranspose2D(inChannels: 16, outChannels: inputChannels, kernelSize: (3, 3), padding: (1, 1))
+    )
+    
+    let reconstructed = decoder.forward(cnnOutput)
+    print("Decoder output shape: \(reconstructed.shape)")
+    print("Originale vs Ricostruito: \(input.shape) -> \(reconstructed.shape)")
+}
+
 // MARK: - 4. Training con ottimizzatore
 func demoTraining() {
     print("\n=== DEMO TRAINING ===")
@@ -170,6 +255,8 @@ func runSwifTorchDemo() {
     demoTensors()
     demoSimpleModel()
     demoGRUModel()
+    demoLSTMModel()
+    demoConvNets()
     demoTraining()
     demoMLModelConversion()
 }
